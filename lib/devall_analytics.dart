@@ -3,6 +3,7 @@ library devall_analytics;
 import 'dart:io';
 
 import 'package:devall_analytics/enums.dart';
+import 'package:devall_analytics/device_identity.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
@@ -28,14 +29,19 @@ class DevAllAnalytics {
       throw Exception('DevallAnalytics not initialized. Call init() first.');
     }
 
+    final deviceId = await DevAllDeviceIdentity.getOrCreateDeviceId();
+    timestamp ??= DateTime.now();
+    deviceInfo ??= await getDefaultDeviceInfo();
+
     final body = {
-      "timestamp": (timestamp ?? DateTime.now()).toUtc().toIso8601String(),
+      "deviceId": deviceId,
+      "timestamp": timestamp.toUtc().toIso8601String(),
       "type": type.name,
       "environment": environment.name,
       "category": category,
       "message": message,
       "payload": payload,
-      "deviceInfo": deviceInfo ?? await getDefaultDeviceInfo(),
+      "deviceInfo": deviceInfo,
       "ip": ip,
     };
 

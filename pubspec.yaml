@@ -1,6 +1,6 @@
 name: devall_analytics
 description: Pacote oficial DevAll Tech para envio de eventos analíticos.
-version: 0.0.3
+version: 0.0.4
 homepage: https://analytics.devalltech.com.br
 repository: https://github.com/DevAllTech/devall_analytics
 issue_tracker: https://github.com/DevAllTech/devall_analytics/issues
@@ -13,6 +13,8 @@ dependencies:
   flutter:
     sdk: flutter
   http: ^1.4.0
+  shared_preferences: ^2.5.3
+  uuid: ^4.5.1
 
 dev_dependencies:
   flutter_test:
