@@ -4,6 +4,8 @@
 Monitore eventos, erros e comportamentos do seu aplicativo com facilidade.
 
 [![pub package](https://img.shields.io/pub/v/devall_analytics.svg)](https://pub.dev/packages/devall_analytics)
+![Publisher](https://img.shields.io/badge/publisher-devalltech.com.br-blue)
+[![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
 
@@ -23,7 +25,7 @@ Adicione ao seu `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  devall_analytics: ^0.0.3
+  devall_analytics: ^0.0.4
 ```
 
 Rode:
@@ -89,6 +91,13 @@ enum DevAllEnvironment {
 ## 🔍 Exemplo completo
 
 Veja na pasta [`example/`](example/main.dart) um projeto de exemplo com o SDK em funcionamento.
+
+---
+
+## 📦 Publicado por [DevAll Tech](https://pub.dev/publishers/devalltech.com.br/packages)
+
+Este pacote é mantido oficialmente pela equipe da DevAll Tech, empresa especializada em desenvolvimento de apps, sistemas e soluções digitais.
+Veja todos os pacotes em [`nossa página de publicadores no pub.dev`](https://pub.dev/publishers/devalltech.com.br/packages).
 
 ---
 

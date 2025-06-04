@@ -1,12 +1,26 @@
-## [0.0.3] - 2025-05-28
+## [0.0.4] - 2025-06-03
 
-### Added
+### ✨ Novidades
 
-- Novo método auxiliar `getDefaultDeviceInfo()` que retorna informações básicas do dispositivo sem dependências externas:
-  - `platform`, `osVersion`, `locale`, `isPhysicalDevice`
-- Caso `deviceInfo` não seja informado em `trackEvent()`, o SDK utiliza automaticamente esse fallback interno.
+- Adicionado suporte interno a `deviceId` (UUID gerado localmente), permitindo rastrear a origem dos eventos por instalação.
+- Preparação para futuras melhorias com suporte a identificação por usuário (e-mail e nome).
 
-### Changed
+### 🧼 Refatorações
 
-- Classe principal renomeada de `DevallAnalytics` para `DevAllAnalytics`
-- `timestamp` agora pode ser informado por parâmetro. Se omitido, é gerado automaticamente com `DateTime.now()`
+- Código mais limpo com tratamento padrão para campos opcionais como `timestamp` e `deviceInfo`.
+- Agora, se `timestamp` não for informado, será atribuído automaticamente o horário atual.
+- Se `deviceInfo` for omitido, é enviado como objeto padrão `{ 'platform': '', 'osVersion': '', 'locale': '', 'isPhysicalDevice': true }`.
+
+---
+
+### ✅ Exemplo de uso
+
+```dart
+await DevAllAnalytics.trackEvent(
+  type: DevAllEventType.warning,
+  environment: DevAllEnvironment.staging,
+  category: "Onboarding",
+  message: "Tela travada ao carregar passo 2",
+  payload: {"step": 2},
+);
+```

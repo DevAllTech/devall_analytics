@@ -30,16 +30,18 @@ class DevAllAnalytics {
     }
 
     final deviceId = await DevAllDeviceIdentity.getOrCreateDeviceId();
+    timestamp ??= DateTime.now();
+    deviceInfo ??= await getDefaultDeviceInfo();
 
     final body = {
       "deviceId": deviceId,
-      "timestamp": (timestamp ?? DateTime.now()).toUtc().toIso8601String(),
+      "timestamp": timestamp.toUtc().toIso8601String(),
       "type": type.name,
       "environment": environment.name,
       "category": category,
       "message": message,
       "payload": payload,
-      "deviceInfo": deviceInfo ?? await getDefaultDeviceInfo(),
+      "deviceInfo": deviceInfo,
       "ip": ip,
     };
 
