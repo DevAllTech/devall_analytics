@@ -566,4 +566,633 @@ void main() {
       );
     });
   });
+
+  // ─── New Feature Tests ───
+
+  group('user identity', () {
+    test('identify adds userId to events', () async {
+      DevAllAnalytics.init(
+        projectToken: 'test-token',
+        httpClient: mockClient,
+        enableOffline: false,
+      );
+
+      DevAllAnalytics.identify(
+        userId: 'user-123',
+        traits: {'email': 'test@example.com', 'name': 'Test User'},
+      );
+
+      await DevAllAnalytics.trackEvent(
+        type: DevAllEventType.info,
+        environment: DevAllEnvironment.dev,
+        category: 'test',
+        message: 'identified event',
+        payload: {},
+        deviceInfo: {'platform': 'test'},
+      );
+
+      final body =
+          jsonDecode(capturedRequests.first.body) as Map<String, dynamic>;
+      expect(body['userId'], equals('user-123'));
+      expect(body['userTraits'], equals({
+        'email': 'test@example.com',
+        'name': 'Test User',
+      }));
+    });
+
+    test('clearIdentity removes userId from events', () async {
+      DevAllAnalytics.init(
+        projectToken: 'test-token',
+        httpClient: mockClient,
+        enableOffline: false,
+      );
+
+      DevAllAnalytics.identify(userId: 'user-123');
+      DevAllAnalytics.clearIdentity();
+
+      await DevAllAnalytics.trackEvent(
+        type: DevAllEventType.info,
+        environment: DevAllEnvironment.dev,
+        category: 'test',
+        message: 'anonymous event',
+        payload: {},
+        deviceInfo: {'platform': 'test'},
+      );
+
+      final body =
+          jsonDecode(capturedRequests.first.body) as Map<String, dynamic>;
+      expect(body.containsKey('userId'), isFalse);
+    });
+
+    test('identify throws on empty userId', () {
+      expect(
+        () => DevAllAnalytics.identify(userId: ''),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+
+    test('currentUserId returns correct value', () {
+      DevAllAnalytics.identify(userId: 'u1');
+      expect(DevAllAnalytics.currentUserId, equals('u1'));
+
+      DevAllAnalytics.clearIdentity();
+      expect(DevAllAnalytics.currentUserId, isNull);
+    });
+  });
+
+  group('session tracking', () {
+    test('startSession generates a sessionId', () {
+      final sessionId = DevAllAnalytics.startSession();
+      expect(sessionId, isA<String>());
+      expect(sessionId, isNotEmpty);
+      expect(DevAllAnalytics.currentSessionId, equals(sessionId));
+    });
+
+    test('sessionId is included in events', () async {
+      DevAllAnalytics.init(
+        projectToken: 'test-token',
+        httpClient: mockClient,
+        enableOffline: false,
+      );
+
+      final sessionId = DevAllAnalytics.startSession();
+
+      await DevAllAnalytics.trackEvent(
+        type: DevAllEventType.info,
+        environment: DevAllEnvironment.dev,
+        category: 'test',
+        message: 'session event',
+        payload: {},
+        deviceInfo: {'platform': 'test'},
+      );
+
+      final body =
+          jsonDecode(capturedRequests.first.body) as Map<String, dynamic>;
+      expect(body['sessionId'], equals(sessionId));
+      expect(body.containsKey('sessionStart'), isTrue);
+    });
+
+    test('endSession clears the sessionId', () {
+      DevAllAnalytics.startSession();
+      DevAllAnalytics.endSession();
+      expect(DevAllAnalytics.currentSessionId, isNull);
+    });
+  });
+
+  group('breadcrumbs', () {
+    test('addBreadcrumb stores breadcrumbs', () {
+      DevAllAnalytics.addBreadcrumb(
+        category: 'ui',
+        message: 'Button clicked',
+        data: {'button': 'submit'},
+      );
+
+      expect(DevAllBreadcrumbs.length, equals(1));
+      final json = DevAllBreadcrumbs.toJsonList();
+      expect(json.first['category'], equals('ui'));
+      expect(json.first['message'], equals('Button clicked'));
+      expect(json.first['data'], equals({'button': 'submit'}));
+    });
+
+    test('breadcrumbs are included in error events', () async {
+      DevAllAnalytics.init(
+        projectToken: 'test-token',
+        httpClient: mockClient,
+        enableOffline: false,
+      );
+
+      DevAllAnalytics.addBreadcrumb(
+        category: 'navigation',
+        message: 'Opened settings',
+      );
+      DevAllAnalytics.addBreadcrumb(
+        category: 'ui',
+        message: 'Clicked save',
+      );
+
+      await DevAllAnalytics.trackEvent(
+        type: DevAllEventType.error,
+        environment: DevAllEnvironment.prod,
+        category: 'crash',
+        message: 'Null pointer exception',
+        payload: {},
+        deviceInfo: {'platform': 'test'},
+      );
+
+      final body =
+          jsonDecode(capturedRequests.first.body) as Map<String, dynamic>;
+      expect(body['breadcrumbs'], isA<List>());
+      expect((body['breadcrumbs'] as List).length, greaterThanOrEqualTo(2));
+    });
+
+    test('breadcrumbs respect max limit', () {
+      DevAllBreadcrumbs.setMaxBreadcrumbs(3);
+
+      for (var i = 0; i < 5; i++) {
+        DevAllBreadcrumbs.add(category: 'test', message: 'crumb $i');
+      }
+
+      expect(DevAllBreadcrumbs.length, equals(3));
+      final json = DevAllBreadcrumbs.toJsonList();
+      expect(json.first['message'], equals('crumb 2'));
+      expect(json.last['message'], equals('crumb 4'));
+    });
+
+    test('clearBreadcrumbs removes all breadcrumbs', () {
+      DevAllAnalytics.addBreadcrumb(category: 'test', message: 'crumb');
+      DevAllAnalytics.clearBreadcrumbs();
+      expect(DevAllBreadcrumbs.length, equals(0));
+    });
+  });
+
+  group('sampling', () {
+    test('samplingRate 0.0 blocks all events', () async {
+      DevAllAnalytics.init(
+        projectToken: 'test-token',
+        httpClient: mockClient,
+        enableOffline: false,
+        samplingRate: 0.0,
+      );
+
+      for (var i = 0; i < 10; i++) {
+        await DevAllAnalytics.trackEvent(
+          type: DevAllEventType.info,
+          environment: DevAllEnvironment.dev,
+          category: 'test',
+          message: 'sampled event $i',
+          payload: {},
+          deviceInfo: {'platform': 'test'},
+        );
+      }
+
+      expect(capturedRequests, isEmpty);
+    });
+
+    test('samplingRate 1.0 sends all events', () async {
+      DevAllAnalytics.init(
+        projectToken: 'test-token',
+        httpClient: mockClient,
+        enableOffline: false,
+        samplingRate: 1.0,
+      );
+
+      for (var i = 0; i < 5; i++) {
+        await DevAllAnalytics.trackEvent(
+          type: DevAllEventType.info,
+          environment: DevAllEnvironment.dev,
+          category: 'test',
+          message: 'event $i',
+          payload: {},
+          deviceInfo: {'platform': 'test'},
+        );
+      }
+
+      expect(capturedRequests, hasLength(5));
+    });
+  });
+
+  group('rate limiting', () {
+    test('rate limiter blocks events over the limit', () async {
+      DevAllAnalytics.init(
+        projectToken: 'test-token',
+        httpClient: mockClient,
+        enableOffline: false,
+        maxEventsPerMinute: 3,
+      );
+
+      for (var i = 0; i < 5; i++) {
+        await DevAllAnalytics.trackEvent(
+          type: DevAllEventType.info,
+          environment: DevAllEnvironment.dev,
+          category: 'test',
+          message: 'rate limited event $i',
+          payload: {},
+          deviceInfo: {'platform': 'test'},
+        );
+      }
+
+      // Only first 3 should be sent
+      expect(capturedRequests, hasLength(3));
+    });
+
+    test('rate limiter disabled by default (0)', () async {
+      DevAllAnalytics.init(
+        projectToken: 'test-token',
+        httpClient: mockClient,
+        enableOffline: false,
+      );
+
+      for (var i = 0; i < 10; i++) {
+        await DevAllAnalytics.trackEvent(
+          type: DevAllEventType.info,
+          environment: DevAllEnvironment.dev,
+          category: 'test',
+          message: 'event $i',
+          payload: {},
+          deviceInfo: {'platform': 'test'},
+        );
+      }
+
+      expect(capturedRequests, hasLength(10));
+    });
+  });
+
+  group('middleware', () {
+    test('middleware can modify events', () async {
+      DevAllAnalytics.init(
+        projectToken: 'test-token',
+        httpClient: mockClient,
+        enableOffline: false,
+      );
+
+      DevAllAnalytics.addMiddleware((event) {
+        event['custom_field'] = 'injected';
+        return event;
+      });
+
+      await DevAllAnalytics.trackEvent(
+        type: DevAllEventType.info,
+        environment: DevAllEnvironment.dev,
+        category: 'test',
+        message: 'middleware test',
+        payload: {},
+        deviceInfo: {'platform': 'test'},
+      );
+
+      final body =
+          jsonDecode(capturedRequests.first.body) as Map<String, dynamic>;
+      expect(body['custom_field'], equals('injected'));
+    });
+
+    test('middleware can block events by returning null', () async {
+      DevAllAnalytics.init(
+        projectToken: 'test-token',
+        httpClient: mockClient,
+        enableOffline: false,
+      );
+
+      DevAllAnalytics.addMiddleware((event) {
+        if (event['category'] == 'blocked') return null;
+        return event;
+      });
+
+      await DevAllAnalytics.trackEvent(
+        type: DevAllEventType.info,
+        environment: DevAllEnvironment.dev,
+        category: 'blocked',
+        message: 'should be blocked',
+        payload: {},
+        deviceInfo: {'platform': 'test'},
+      );
+
+      await DevAllAnalytics.trackEvent(
+        type: DevAllEventType.info,
+        environment: DevAllEnvironment.dev,
+        category: 'allowed',
+        message: 'should be sent',
+        payload: {},
+        deviceInfo: {'platform': 'test'},
+      );
+
+      expect(capturedRequests, hasLength(1));
+      final body =
+          jsonDecode(capturedRequests.first.body) as Map<String, dynamic>;
+      expect(body['category'], equals('allowed'));
+    });
+
+    test('middleware can redact sensitive data', () async {
+      DevAllAnalytics.init(
+        projectToken: 'test-token',
+        httpClient: mockClient,
+        enableOffline: false,
+      );
+
+      DevAllAnalytics.addMiddleware((event) {
+        final payload = event['payload'] as Map<String, dynamic>?;
+        if (payload != null) {
+          payload.remove('password');
+          payload.remove('creditCard');
+        }
+        return event;
+      });
+
+      await DevAllAnalytics.trackEvent(
+        type: DevAllEventType.info,
+        environment: DevAllEnvironment.dev,
+        category: 'auth',
+        message: 'login attempt',
+        payload: {
+          'email': 'user@test.com',
+          'password': 'secret123',
+          'creditCard': '4111-1111-1111-1111',
+        },
+        deviceInfo: {'platform': 'test'},
+      );
+
+      final body =
+          jsonDecode(capturedRequests.first.body) as Map<String, dynamic>;
+      final sentPayload = body['payload'] as Map<String, dynamic>;
+      expect(sentPayload['email'], equals('user@test.com'));
+      expect(sentPayload.containsKey('password'), isFalse);
+      expect(sentPayload.containsKey('creditCard'), isFalse);
+    });
+
+    test('clearMiddleware removes all middleware', () {
+      DevAllAnalytics.addMiddleware((e) => e);
+      DevAllAnalytics.addMiddleware((e) => e);
+      expect(DevAllMiddlewareManager.count, equals(2));
+
+      DevAllAnalytics.clearMiddleware();
+      expect(DevAllMiddlewareManager.count, equals(0));
+    });
+  });
+
+  group('consent/GDPR', () {
+    test('events are blocked when consent is revoked', () async {
+      DevAllAnalytics.init(
+        projectToken: 'test-token',
+        httpClient: mockClient,
+        enableOffline: false,
+      );
+
+      await DevAllAnalytics.setConsent(granted: false);
+
+      await DevAllAnalytics.trackEvent(
+        type: DevAllEventType.info,
+        environment: DevAllEnvironment.dev,
+        category: 'test',
+        message: 'should be blocked',
+        payload: {},
+        deviceInfo: {'platform': 'test'},
+      );
+
+      expect(capturedRequests, isEmpty);
+    });
+
+    test('events are sent when consent is granted', () async {
+      DevAllAnalytics.init(
+        projectToken: 'test-token',
+        httpClient: mockClient,
+        enableOffline: false,
+      );
+
+      await DevAllAnalytics.setConsent(granted: true);
+
+      await DevAllAnalytics.trackEvent(
+        type: DevAllEventType.info,
+        environment: DevAllEnvironment.dev,
+        category: 'test',
+        message: 'should be sent',
+        payload: {},
+        deviceInfo: {'platform': 'test'},
+      );
+
+      expect(capturedRequests, hasLength(1));
+    });
+
+    test('consent defaults to allowed (opt-out model)', () async {
+      DevAllAnalytics.init(
+        projectToken: 'test-token',
+        httpClient: mockClient,
+        enableOffline: false,
+      );
+
+      await DevAllAnalytics.trackEvent(
+        type: DevAllEventType.info,
+        environment: DevAllEnvironment.dev,
+        category: 'test',
+        message: 'default consent',
+        payload: {},
+        deviceInfo: {'platform': 'test'},
+      );
+
+      expect(capturedRequests, hasLength(1));
+    });
+  });
+
+  group('screen tracking', () {
+    test('trackScreen adds screen data to events', () async {
+      DevAllAnalytics.init(
+        projectToken: 'test-token',
+        httpClient: mockClient,
+        enableOffline: false,
+      );
+
+      DevAllAnalytics.trackScreen('HomePage');
+
+      await DevAllAnalytics.trackEvent(
+        type: DevAllEventType.info,
+        environment: DevAllEnvironment.dev,
+        category: 'test',
+        message: 'event on home',
+        payload: {},
+        deviceInfo: {'platform': 'test'},
+      );
+
+      final body =
+          jsonDecode(capturedRequests.first.body) as Map<String, dynamic>;
+      expect(body['screen'], equals('HomePage'));
+    });
+
+    test('currentScreen returns active screen', () {
+      DevAllAnalytics.trackScreen('ProfilePage');
+      expect(DevAllAnalytics.currentScreen, equals('ProfilePage'));
+
+      DevAllAnalytics.endScreen();
+      expect(DevAllAnalytics.currentScreen, isNull);
+    });
+  });
+
+  group('multi-destination', () {
+    test('events are forwarded to custom destinations', () async {
+      final receivedEvents = <Map<String, dynamic>>[];
+
+      DevAllAnalytics.init(
+        projectToken: 'test-token',
+        httpClient: mockClient,
+        enableOffline: false,
+      );
+
+      DevAllAnalytics.addDestination(_TestDestination(receivedEvents));
+
+      await DevAllAnalytics.trackEvent(
+        type: DevAllEventType.info,
+        environment: DevAllEnvironment.dev,
+        category: 'test',
+        message: 'multi-dest event',
+        payload: {},
+        deviceInfo: {'platform': 'test'},
+      );
+
+      // Should be sent to both API and custom destination
+      expect(capturedRequests, hasLength(1));
+      expect(receivedEvents, hasLength(1));
+      expect(receivedEvents.first['message'], equals('multi-dest event'));
+    });
+
+    test('destination errors do not block main send', () async {
+      DevAllAnalytics.init(
+        projectToken: 'test-token',
+        httpClient: mockClient,
+        enableOffline: false,
+      );
+
+      DevAllAnalytics.addDestination(_FailingDestination());
+
+      await DevAllAnalytics.trackEvent(
+        type: DevAllEventType.info,
+        environment: DevAllEnvironment.dev,
+        category: 'test',
+        message: 'should still send',
+        payload: {},
+        deviceInfo: {'platform': 'test'},
+      );
+
+      // Main API should still receive the event
+      expect(capturedRequests, hasLength(1));
+    });
+  });
+
+  group('debug log', () {
+    test('events are logged to debug log', () async {
+      DevAllAnalytics.init(
+        projectToken: 'test-token',
+        httpClient: mockClient,
+        enableOffline: false,
+      );
+
+      await DevAllAnalytics.trackEvent(
+        type: DevAllEventType.info,
+        environment: DevAllEnvironment.dev,
+        category: 'test',
+        message: 'debug log test',
+        payload: {},
+        deviceInfo: {'platform': 'test'},
+      );
+
+      // In debug mode, entries should be logged
+      // DevAllDebugLog entries are only added in kDebugMode
+      // In tests, kDebugMode is true
+      expect(DevAllDebugLog.length, greaterThan(0));
+    });
+  });
+
+  group('error handler', () {
+    test('captureFlutterErrors installs handlers', () {
+      DevAllAnalytics.init(
+        projectToken: 'test-token',
+        httpClient: mockClient,
+        enableOffline: false,
+      );
+
+      DevAllAnalytics.captureFlutterErrors();
+      expect(DevAllErrorHandler.isInstalled, isTrue);
+
+      DevAllAnalytics.stopCapturingErrors();
+      expect(DevAllErrorHandler.isInstalled, isFalse);
+    });
+  });
+
+  group('init with new options', () {
+    test('accepts all new configuration options', () {
+      expect(
+        () => DevAllAnalytics.init(
+          projectToken: 'test-token',
+          httpClient: mockClient,
+          samplingRate: 0.5,
+          maxEventsPerMinute: 100,
+          maxBreadcrumbs: 25,
+          enableCompression: true,
+        ),
+        returnsNormally,
+      );
+    });
+
+    test('clamps samplingRate to 0.0-1.0', () async {
+      // samplingRate > 1.0 should be clamped to 1.0 (all events sent)
+      DevAllAnalytics.init(
+        projectToken: 'test-token',
+        httpClient: mockClient,
+        enableOffline: false,
+        samplingRate: 2.0,
+      );
+
+      await DevAllAnalytics.trackEvent(
+        type: DevAllEventType.info,
+        environment: DevAllEnvironment.dev,
+        category: 'test',
+        message: 'clamped rate',
+        payload: {},
+        deviceInfo: {'platform': 'test'},
+      );
+
+      expect(capturedRequests, hasLength(1));
+    });
+  });
+}
+
+/// Test helper: a custom destination that collects events.
+class _TestDestination implements DevAllEventDestination {
+  final List<Map<String, dynamic>> events;
+
+  _TestDestination(this.events);
+
+  @override
+  String get name => 'Test';
+
+  @override
+  Future<void> sendEvent(Map<String, dynamic> event) async {
+    events.add(event);
+  }
+}
+
+/// Test helper: a destination that always throws.
+class _FailingDestination implements DevAllEventDestination {
+  @override
+  String get name => 'Failing';
+
+  @override
+  Future<void> sendEvent(Map<String, dynamic> event) async {
+    throw Exception('Destination error');
+  }
 }

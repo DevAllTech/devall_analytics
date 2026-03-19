@@ -1,15 +1,30 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:devall_analytics/enums.dart';
 import 'package:devall_analytics/device_identity.dart';
 
+import 'breadcrumbs.dart';
+import 'compression_stub.dart'
+    if (dart.library.io) 'compression_io.dart'
+    if (dart.library.js_interop) 'compression_web.dart';
+import 'consent_manager.dart';
+import 'debug_overlay.dart';
+import 'error_handler.dart';
+import 'event_destination.dart';
+import 'lifecycle_observer.dart';
+import 'middleware.dart';
 import 'offline_storage.dart';
 import 'platform_info_stub.dart'
     if (dart.library.io) 'platform_info_io.dart'
     if (dart.library.js_interop) 'platform_info_web.dart';
+import 'rate_limiter.dart';
+import 'screen_tracker.dart';
+import 'session_manager.dart';
+import 'user_identity.dart';
 
 const _defaultBaseUrl = 'https://api-logs.devalltech.com.br/api/v1';
 const _defaultBatchSize = 10;
@@ -33,6 +48,13 @@ class DevAllAnalytics {
   static Timer? _offlineRetryTimer;
   static bool _isRetryingOffline = false;
 
+  // Sampling
+  static double _samplingRate = 1.0;
+  static final Random _random = Random();
+
+  // Compression
+  static bool _compressionEnabled = false;
+
   /// Initializes the SDK with the project token and optional configuration.
   ///
   /// [projectToken] - Required. Your project token from DevAll Tech.
@@ -44,6 +66,10 @@ class DevAllAnalytics {
   /// [enableOffline] - Optional. Enable offline queue with auto-retry (default: true).
   /// [offlineRetryInterval] - Optional. Interval to retry sending offline events (default: 2min).
   /// [maxOfflineEvents] - Optional. Max events to keep offline (default: 500).
+  /// [samplingRate] - Optional. Percentage of events to send (0.0-1.0, default: 1.0).
+  /// [maxEventsPerMinute] - Optional. Rate limit per minute (0 = disabled, default: 0).
+  /// [maxBreadcrumbs] - Optional. Max breadcrumbs to keep (default: 50).
+  /// [enableCompression] - Optional. Enable gzip compression for payloads (default: false).
   static void init({
     required String projectToken,
     String? baseUrl,
@@ -54,6 +80,10 @@ class DevAllAnalytics {
     bool enableOffline = true,
     Duration offlineRetryInterval = _defaultOfflineRetryInterval,
     int maxOfflineEvents = 500,
+    double samplingRate = 1.0,
+    int maxEventsPerMinute = 0,
+    int maxBreadcrumbs = 50,
+    bool enableCompression = false,
   }) {
     if (projectToken.trim().isEmpty) {
       throw ArgumentError('projectToken must not be empty.');
@@ -67,8 +97,12 @@ class DevAllAnalytics {
     _flushInterval = flushInterval;
     _offlineEnabled = enableOffline;
     _offlineRetryInterval = offlineRetryInterval;
+    _samplingRate = samplingRate.clamp(0.0, 1.0);
+    _compressionEnabled = enableCompression;
 
     DevAllOfflineStorage.setMaxOfflineEvents(maxOfflineEvents);
+    DevAllRateLimiter.setMaxEventsPerMinute(maxEventsPerMinute);
+    DevAllBreadcrumbs.setMaxBreadcrumbs(maxBreadcrumbs);
 
     if (_batchEnabled) {
       _startFlushTimer();
@@ -98,8 +132,210 @@ class DevAllAnalytics {
     _offlineRetryTimer?.cancel();
     _offlineRetryTimer = null;
     _isRetryingOffline = false;
+    _samplingRate = 1.0;
+    _compressionEnabled = false;
     DevAllOfflineStorage.resetConfig();
+    DevAllUserIdentity.reset();
+    DevAllSessionManager.reset();
+    DevAllBreadcrumbs.reset();
+    DevAllErrorHandler.reset();
+    DevAllRateLimiter.reset();
+    DevAllMiddlewareManager.reset();
+    DevAllLifecycleObserver.reset();
+    DevAllScreenTracker.reset();
+    DevAllDestinationManager.reset();
+    DevAllDebugLog.reset();
+    DevAllConsentManager.resetSync();
   }
+
+  // ─── User Identity ───
+
+  /// Identifies the current user. All subsequent events include user data.
+  static void identify({
+    required String userId,
+    Map<String, dynamic>? traits,
+  }) {
+    DevAllUserIdentity.identify(userId: userId, traits: traits);
+  }
+
+  /// Clears the current user identity (e.g., on logout).
+  static void clearIdentity() {
+    DevAllUserIdentity.clear();
+  }
+
+  /// Returns the current userId, or null.
+  static String? get currentUserId => DevAllUserIdentity.userId;
+
+  // ─── Session Tracking ───
+
+  /// Starts a new session. Returns the sessionId.
+  static String startSession() {
+    return DevAllSessionManager.start();
+  }
+
+  /// Ends the current session.
+  static void endSession() {
+    DevAllSessionManager.end();
+  }
+
+  /// Returns the current sessionId, or null.
+  static String? get currentSessionId => DevAllSessionManager.sessionId;
+
+  // ─── Breadcrumbs ───
+
+  /// Adds a breadcrumb for error context.
+  static void addBreadcrumb({
+    required String category,
+    required String message,
+    Map<String, dynamic>? data,
+  }) {
+    DevAllBreadcrumbs.add(category: category, message: message, data: data);
+  }
+
+  /// Clears all breadcrumbs.
+  static void clearBreadcrumbs() {
+    DevAllBreadcrumbs.clear();
+  }
+
+  // ─── Global Error Handler ───
+
+  /// Installs global error handlers that auto-track errors.
+  static void captureFlutterErrors() {
+    DevAllErrorHandler.install((error, stackTrace, source) async {
+      if (_projectToken == null) return;
+
+      await trackEvent(
+        type: DevAllEventType.error,
+        environment: DevAllEnvironment.prod,
+        category: 'crash.$source',
+        message: error.toString(),
+        payload: {
+          'source': source,
+          if (stackTrace != null) 'stackTrace': stackTrace.toString(),
+          'breadcrumbs': DevAllBreadcrumbs.toJsonList(),
+        },
+      );
+    });
+  }
+
+  /// Uninstalls global error handlers.
+  static void stopCapturingErrors() {
+    DevAllErrorHandler.uninstall();
+  }
+
+  // ─── Lifecycle ───
+
+  /// Installs lifecycle observer to auto-track app lifecycle events.
+  static void enableLifecycleTracking() {
+    DevAllLifecycleObserver.install((event) {
+      if (_projectToken == null) return;
+
+      // Start/end sessions based on lifecycle
+      if (event == 'app_open' || event == 'app_resumed') {
+        if (DevAllSessionManager.sessionId == null) {
+          DevAllSessionManager.start();
+        }
+      } else if (event == 'app_paused' || event == 'app_detached') {
+        DevAllSessionManager.end();
+      }
+
+      trackEvent(
+        type: DevAllEventType.info,
+        environment: DevAllEnvironment.prod,
+        category: 'lifecycle',
+        message: event,
+        payload: {'lifecycle_event': event},
+      );
+    });
+  }
+
+  /// Disables lifecycle tracking.
+  static void disableLifecycleTracking() {
+    DevAllLifecycleObserver.uninstall();
+  }
+
+  // ─── Screen Tracking ───
+
+  /// Tracks a screen view. Automatically ends the previous screen.
+  static void trackScreen(String screenName) {
+    DevAllScreenTracker.setOnScreenEnd((name, duration) {
+      if (_projectToken == null) return;
+      trackEvent(
+        type: DevAllEventType.metric,
+        environment: DevAllEnvironment.prod,
+        category: 'screen_view',
+        message: 'Screen ended: $name',
+        payload: {
+          'screen': name,
+          'durationMs': duration.inMilliseconds,
+        },
+      );
+    });
+
+    DevAllScreenTracker.trackScreen(screenName);
+
+    addBreadcrumb(category: 'navigation', message: 'Screen: $screenName');
+  }
+
+  /// Ends tracking of the current screen.
+  static void endScreen() {
+    DevAllScreenTracker.endScreen();
+  }
+
+  /// Returns the current screen name, or null.
+  static String? get currentScreen => DevAllScreenTracker.currentScreen;
+
+  // ─── Middleware ───
+
+  /// Adds an event middleware (onBeforeSend).
+  ///
+  /// Middleware can modify events or return null to block them.
+  /// ```dart
+  /// DevAllAnalytics.addMiddleware((event) {
+  ///   // Redact sensitive data
+  ///   event['payload']?.remove('password');
+  ///   return event;
+  /// });
+  /// ```
+  static void addMiddleware(DevAllEventMiddleware middleware) {
+    DevAllMiddlewareManager.add(middleware);
+  }
+
+  /// Removes a specific middleware.
+  static void removeMiddleware(DevAllEventMiddleware middleware) {
+    DevAllMiddlewareManager.remove(middleware);
+  }
+
+  /// Clears all middleware.
+  static void clearMiddleware() {
+    DevAllMiddlewareManager.clear();
+  }
+
+  // ─── Consent/GDPR ───
+
+  /// Sets the user's consent status.
+  static Future<void> setConsent({required bool granted}) {
+    return DevAllConsentManager.setConsent(granted: granted);
+  }
+
+  /// Returns whether consent is currently granted.
+  static Future<bool?> isConsentGranted() {
+    return DevAllConsentManager.isConsentGranted();
+  }
+
+  // ─── Multi-Destination ───
+
+  /// Adds an event destination for multi-service forwarding.
+  static void addDestination(DevAllEventDestination destination) {
+    DevAllDestinationManager.add(destination);
+  }
+
+  /// Removes an event destination.
+  static void removeDestination(DevAllEventDestination destination) {
+    DevAllDestinationManager.remove(destination);
+  }
+
+  // ─── Core Event Tracking ───
 
   /// Tracks an analytics event.
   static Future<void> trackEvent({
@@ -116,11 +352,32 @@ class DevAllAnalytics {
       throw Exception('DevAllAnalytics not initialized. Call init() first.');
     }
 
+    // Consent check
+    if (!DevAllConsentManager.isTrackingAllowed) {
+      if (kDebugMode) {
+        print('DevAllAnalytics: Event blocked (consent not granted).');
+      }
+      return;
+    }
+
+    // Sampling
+    if (_samplingRate < 1.0 && _random.nextDouble() > _samplingRate) {
+      if (kDebugMode) {
+        print('DevAllAnalytics: Event sampled out.');
+      }
+      return;
+    }
+
+    // Rate limiting
+    if (!DevAllRateLimiter.allowEvent()) {
+      return;
+    }
+
     final deviceId = await DevAllDeviceIdentity.getOrCreateDeviceId();
     timestamp ??= DateTime.now();
     deviceInfo ??= _getDefaultDeviceInfo();
 
-    final body = {
+    var body = <String, dynamic>{
       'deviceId': deviceId,
       'timestamp': timestamp.toUtc().toIso8601String(),
       'type': type.name,
@@ -130,7 +387,32 @@ class DevAllAnalytics {
       'payload': payload,
       'deviceInfo': deviceInfo,
       if (ip != null) 'ip': ip,
+      // Enrich with user identity
+      ...DevAllUserIdentity.toEventData(),
+      // Enrich with session data
+      ...DevAllSessionManager.toEventData(),
+      // Enrich with screen data
+      ...DevAllScreenTracker.toEventData(),
     };
+
+    // Include breadcrumbs in error events
+    if (type == DevAllEventType.error) {
+      body['breadcrumbs'] = DevAllBreadcrumbs.toJsonList();
+    }
+
+    // Run through middleware
+    final processed = DevAllMiddlewareManager.process(body);
+    if (processed == null) return;
+    body = processed;
+
+    // Add breadcrumb for this event
+    DevAllBreadcrumbs.add(category: category, message: message);
+
+    // Debug log
+    DevAllDebugLog.add(type: type.name, message: '$category: $message');
+
+    // Forward to external destinations
+    DevAllDestinationManager.forwardEvent(body);
 
     if (_batchEnabled) {
       _eventQueue.add(body);
@@ -211,6 +493,15 @@ class DevAllAnalytics {
   /// On final failure, saves events offline if enabled.
   static Future<void> _sendEvents(List<Map<String, dynamic>> events) async {
     final success = await _sendEventsRaw(events);
+
+    DevAllDebugLog.add(
+      type: 'http',
+      message: success
+          ? 'Sent ${events.length} event(s)'
+          : 'Failed to send ${events.length} event(s)',
+      success: success,
+    );
+
     if (!success && _offlineEnabled) {
       await DevAllOfflineStorage.saveEvents(events);
     }
@@ -225,22 +516,44 @@ class DevAllAnalytics {
 
     try {
       final uri = Uri.parse('$_baseUrl/events');
-      final headers = {
+      final headers = <String, String>{
         'Content-Type': 'application/json',
         'x-project-token': _projectToken!,
       };
 
-      final body = events.length == 1
+      final jsonBody = events.length == 1
           ? jsonEncode(events.first)
           : jsonEncode({'events': events});
 
+      // Compression support
+      List<int>? bodyBytes;
+      String body;
+      if (_compressionEnabled) {
+        try {
+          bodyBytes = _gzipEncode(jsonBody);
+          headers['Content-Encoding'] = 'gzip';
+        } catch (_) {
+          // Fallback to uncompressed
+        }
+      }
+      body = jsonBody;
+
       for (var attempt = 0; attempt <= _maxRetries; attempt++) {
         try {
-          final response = await client.post(
-            uri,
-            headers: headers,
-            body: body,
-          );
+          http.Response response;
+          if (bodyBytes != null) {
+            final request = http.Request('POST', uri);
+            request.headers.addAll(headers);
+            request.bodyBytes = bodyBytes;
+            final streamed = await client.send(request);
+            response = await http.Response.fromStream(streamed);
+          } else {
+            response = await client.post(
+              uri,
+              headers: headers,
+              body: body,
+            );
+          }
 
           if (response.statusCode < 400) {
             return true; // Success
@@ -282,6 +595,12 @@ class DevAllAnalytics {
         client.close();
       }
     }
+  }
+
+  /// Gzip-encodes a string. Returns compressed bytes.
+  /// Falls back to uncompressed on unsupported platforms (web).
+  static List<int> _gzipEncode(String input) {
+    return gzipEncode(utf8.encode(input));
   }
 
   /// Returns default device information based on the current platform.
