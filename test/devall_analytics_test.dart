@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:devall_analytics/devall_analytics.dart';
+import 'package:devall_analytics/src/offline_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -18,8 +19,9 @@ void main() {
     });
   });
 
-  tearDown(() {
+  tearDown(() async {
     DevAllAnalytics.reset();
+    await DevAllOfflineStorage.clear();
   });
 
   group('init', () {
@@ -39,7 +41,10 @@ void main() {
 
     test('accepts a valid token', () {
       expect(
-        () => DevAllAnalytics.init(projectToken: 'valid-token'),
+        () => DevAllAnalytics.init(
+          projectToken: 'valid-token',
+          httpClient: mockClient,
+        ),
         returnsNormally,
       );
     });
@@ -63,6 +68,7 @@ void main() {
       DevAllAnalytics.init(
         projectToken: 'test-token',
         httpClient: mockClient,
+        enableOffline: false,
       );
 
       final timestamp = DateTime.utc(2025, 1, 1, 12, 0, 0);
@@ -100,6 +106,7 @@ void main() {
       DevAllAnalytics.init(
         projectToken: 'test-token',
         httpClient: mockClient,
+        enableOffline: false,
       );
 
       await DevAllAnalytics.trackEvent(
@@ -111,7 +118,8 @@ void main() {
         deviceInfo: {'platform': 'test'},
       );
 
-      final body = jsonDecode(capturedRequests.first.body) as Map<String, dynamic>;
+      final body =
+          jsonDecode(capturedRequests.first.body) as Map<String, dynamic>;
       expect(body.containsKey('ip'), isFalse);
     });
 
@@ -119,6 +127,7 @@ void main() {
       DevAllAnalytics.init(
         projectToken: 'test-token',
         httpClient: mockClient,
+        enableOffline: false,
       );
 
       await DevAllAnalytics.trackEvent(
@@ -130,9 +139,9 @@ void main() {
         deviceInfo: {'platform': 'test'},
       );
 
-      final body = jsonDecode(capturedRequests.first.body) as Map<String, dynamic>;
+      final body =
+          jsonDecode(capturedRequests.first.body) as Map<String, dynamic>;
       expect(body['timestamp'], isA<String>());
-      // Should be a valid ISO 8601 string
       expect(() => DateTime.parse(body['timestamp']), returnsNormally);
     });
 
@@ -141,6 +150,7 @@ void main() {
         projectToken: 'test-token',
         httpClient: mockClient,
         baseUrl: 'https://custom-api.example.com/v2',
+        enableOffline: false,
       );
 
       await DevAllAnalytics.trackEvent(
@@ -173,6 +183,7 @@ void main() {
       DevAllAnalytics.init(
         projectToken: 'test-token',
         httpClient: retryClient,
+        enableOffline: false,
       );
 
       await DevAllAnalytics.trackEvent(
@@ -197,6 +208,7 @@ void main() {
       DevAllAnalytics.init(
         projectToken: 'test-token',
         httpClient: clientErrorClient,
+        enableOffline: false,
       );
 
       await DevAllAnalytics.trackEvent(
@@ -219,6 +231,7 @@ void main() {
         httpClient: mockClient,
         enableBatch: true,
         batchSize: 3,
+        enableOffline: false,
       );
 
       await DevAllAnalytics.trackEvent(
@@ -230,7 +243,6 @@ void main() {
         deviceInfo: {'platform': 'test'},
       );
 
-      // Should not have sent yet
       expect(capturedRequests, isEmpty);
       expect(DevAllAnalytics.queueLength, equals(1));
     });
@@ -241,6 +253,7 @@ void main() {
         httpClient: mockClient,
         enableBatch: true,
         batchSize: 2,
+        enableOffline: false,
       );
 
       await DevAllAnalytics.trackEvent(
@@ -261,11 +274,11 @@ void main() {
         deviceInfo: {'platform': 'test'},
       );
 
-      // Should have flushed after reaching batch size
       expect(capturedRequests, hasLength(1));
       expect(DevAllAnalytics.queueLength, equals(0));
 
-      final body = jsonDecode(capturedRequests.first.body) as Map<String, dynamic>;
+      final body =
+          jsonDecode(capturedRequests.first.body) as Map<String, dynamic>;
       expect(body['events'], isA<List>());
       expect((body['events'] as List), hasLength(2));
     });
@@ -276,6 +289,7 @@ void main() {
         httpClient: mockClient,
         enableBatch: true,
         batchSize: 100,
+        enableOffline: false,
       );
 
       await DevAllAnalytics.trackEvent(
@@ -300,6 +314,7 @@ void main() {
         projectToken: 'test-token',
         httpClient: mockClient,
         enableBatch: true,
+        enableOffline: false,
       );
 
       await DevAllAnalytics.flush();
@@ -308,9 +323,198 @@ void main() {
     });
   });
 
+  group('offline', () {
+    test('saves events to offline storage on network failure', () async {
+      final failClient = MockClient((request) async {
+        throw Exception('No internet');
+      });
+
+      DevAllAnalytics.init(
+        projectToken: 'test-token',
+        httpClient: failClient,
+        enableOffline: true,
+      );
+
+      await DevAllAnalytics.trackEvent(
+        type: DevAllEventType.error,
+        environment: DevAllEnvironment.prod,
+        category: 'test',
+        message: 'offline event',
+        payload: {'key': 'value'},
+        deviceInfo: {'platform': 'test'},
+      );
+
+      final pendingCount = await DevAllAnalytics.offlinePendingCount;
+      expect(pendingCount, equals(1));
+
+      final events = await DevAllOfflineStorage.loadEvents();
+      expect(events.first['message'], equals('offline event'));
+      expect(events.first['payload'], equals({'key': 'value'}));
+    });
+
+    test('saves events on server error after max retries', () async {
+      final serverErrorClient = MockClient((request) async {
+        return http.Response('Internal Server Error', 500);
+      });
+
+      DevAllAnalytics.init(
+        projectToken: 'test-token',
+        httpClient: serverErrorClient,
+        enableOffline: true,
+      );
+
+      await DevAllAnalytics.trackEvent(
+        type: DevAllEventType.info,
+        environment: DevAllEnvironment.dev,
+        category: 'test',
+        message: 'server down event',
+        payload: {},
+        deviceInfo: {'platform': 'test'},
+      );
+
+      final pendingCount = await DevAllAnalytics.offlinePendingCount;
+      expect(pendingCount, equals(1));
+    });
+
+    test('does NOT save to offline on 4xx (client error)', () async {
+      final clientErrorClient = MockClient((request) async {
+        return http.Response('Bad Request', 400);
+      });
+
+      DevAllAnalytics.init(
+        projectToken: 'test-token',
+        httpClient: clientErrorClient,
+        enableOffline: true,
+      );
+
+      await DevAllAnalytics.trackEvent(
+        type: DevAllEventType.info,
+        environment: DevAllEnvironment.dev,
+        category: 'test',
+        message: 'bad data',
+        payload: {},
+        deviceInfo: {'platform': 'test'},
+      );
+
+      final pendingCount = await DevAllAnalytics.offlinePendingCount;
+      expect(pendingCount, equals(0));
+    });
+
+    test('retryOfflineEvents sends stored events when online', () async {
+      // First, store events offline
+      await DevAllOfflineStorage.saveEvents([
+        {
+          'deviceId': 'test-device',
+          'timestamp': '2025-01-01T00:00:00.000Z',
+          'type': 'info',
+          'environment': 'dev',
+          'category': 'test',
+          'message': 'offline event 1',
+          'payload': {},
+          'deviceInfo': {'platform': 'test'},
+        },
+        {
+          'deviceId': 'test-device',
+          'timestamp': '2025-01-01T00:01:00.000Z',
+          'type': 'error',
+          'environment': 'prod',
+          'category': 'test',
+          'message': 'offline event 2',
+          'payload': {},
+          'deviceInfo': {'platform': 'test'},
+        },
+      ]);
+
+      // Initialize with a working client
+      DevAllAnalytics.init(
+        projectToken: 'test-token',
+        httpClient: mockClient,
+        enableOffline: true,
+      );
+
+      // Wait a bit for the init's automatic retry
+      await Future.delayed(Duration(milliseconds: 100));
+
+      // Verify events were sent
+      expect(capturedRequests, hasLength(1));
+
+      final body =
+          jsonDecode(capturedRequests.first.body) as Map<String, dynamic>;
+      expect(body['events'], isA<List>());
+      expect((body['events'] as List), hasLength(2));
+
+      // Verify offline storage is now empty
+      final pendingCount = await DevAllAnalytics.offlinePendingCount;
+      expect(pendingCount, equals(0));
+    });
+
+    test('clearOfflineEvents removes all stored events', () async {
+      await DevAllOfflineStorage.saveEvents([
+        {'message': 'event1'},
+        {'message': 'event2'},
+      ]);
+
+      expect(await DevAllOfflineStorage.pendingCount, equals(2));
+
+      await DevAllAnalytics.clearOfflineEvents();
+
+      expect(await DevAllOfflineStorage.pendingCount, equals(0));
+    });
+
+    test('does not save offline when enableOffline is false', () async {
+      final failClient = MockClient((request) async {
+        throw Exception('No internet');
+      });
+
+      DevAllAnalytics.init(
+        projectToken: 'test-token',
+        httpClient: failClient,
+        enableOffline: false,
+      );
+
+      await DevAllAnalytics.trackEvent(
+        type: DevAllEventType.info,
+        environment: DevAllEnvironment.dev,
+        category: 'test',
+        message: 'lost event',
+        payload: {},
+        deviceInfo: {'platform': 'test'},
+      );
+
+      final pendingCount = await DevAllOfflineStorage.pendingCount;
+      expect(pendingCount, equals(0));
+    });
+
+    test('respects maxOfflineEvents limit', () async {
+      DevAllOfflineStorage.setMaxOfflineEvents(3);
+
+      await DevAllOfflineStorage.saveEvents([
+        {'message': 'event1'},
+        {'message': 'event2'},
+        {'message': 'event3'},
+      ]);
+
+      // Adding more should drop the oldest
+      await DevAllOfflineStorage.saveEvents([
+        {'message': 'event4'},
+        {'message': 'event5'},
+      ]);
+
+      final events = await DevAllOfflineStorage.loadEvents();
+      expect(events, hasLength(3));
+      // Oldest events dropped, newest kept
+      expect(events[0]['message'], equals('event3'));
+      expect(events[1]['message'], equals('event4'));
+      expect(events[2]['message'], equals('event5'));
+    });
+  });
+
   group('reset', () {
     test('clears all state', () {
-      DevAllAnalytics.init(projectToken: 'test-token');
+      DevAllAnalytics.init(
+        projectToken: 'test-token',
+        httpClient: mockClient,
+      );
       DevAllAnalytics.reset();
 
       expect(
@@ -331,7 +535,6 @@ void main() {
       final deviceId = await DevAllDeviceIdentity.getOrCreateDeviceId();
       expect(deviceId, isA<String>());
       expect(deviceId, isNotEmpty);
-      // UUID v4 format
       expect(
         RegExp(r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$')
             .hasMatch(deviceId),
@@ -349,16 +552,18 @@ void main() {
   group('enums', () {
     test('DevAllEventType has all expected values', () {
       expect(DevAllEventType.values, hasLength(6));
-      expect(DevAllEventType.values.map((e) => e.name), containsAll([
-        'error', 'warning', 'info', 'log', 'metric', 'custom',
-      ]));
+      expect(
+        DevAllEventType.values.map((e) => e.name),
+        containsAll(['error', 'warning', 'info', 'log', 'metric', 'custom']),
+      );
     });
 
     test('DevAllEnvironment has all expected values', () {
       expect(DevAllEnvironment.values, hasLength(3));
-      expect(DevAllEnvironment.values.map((e) => e.name), containsAll([
-        'dev', 'staging', 'prod',
-      ]));
+      expect(
+        DevAllEnvironment.values.map((e) => e.name),
+        containsAll(['dev', 'staging', 'prod']),
+      );
     });
   });
 }

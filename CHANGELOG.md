@@ -8,6 +8,13 @@
 - **URL configuravel**: parametro `baseUrl` no `init()` para ambientes self-hosted ou staging.
 - **HTTP client injetavel**: parametro `httpClient` no `init()` para facilitar testes com mock.
 - **Barrel file**: import unico via `package:devall_analytics/devall_analytics.dart` exporta tudo.
+- **Modo offline**: eventos que falham no envio sao salvos localmente (SharedPreferences) e reenviados automaticamente quando a internet volta.
+  - `enableOffline` (default: true) - ativa/desativa a fila offline
+  - `offlineRetryInterval` (default: 2min) - intervalo de retry automatico
+  - `maxOfflineEvents` (default: 500) - limite maximo de eventos offline
+  - `retryOfflineEvents()` - metodo publico para trigger manual (ex: ao detectar mudanca de conectividade)
+  - `offlinePendingCount` - consulta quantos eventos estao na fila
+  - `clearOfflineEvents()` - limpa a fila offline
 
 ### Correcoes
 

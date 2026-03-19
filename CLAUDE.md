@@ -23,6 +23,7 @@ lib/
     platform_info_stub.dart      # Stub para conditional import
     platform_info_io.dart        # Device info para plataformas nativas (dart:io)
     platform_info_web.dart       # Device info para Web
+    offline_storage.dart         # Persistencia offline de eventos (SharedPreferences)
 test/
   devall_analytics_test.dart     # Testes unitarios com mock HTTP
 example/
@@ -52,8 +53,13 @@ flutter pub publish      # Publicar no pub.dev
   - `trackEvent()` - Envia ou enfileira eventos
   - `flush()` - Forca envio de eventos na fila (batch mode)
   - `reset()` - Reseta estado (para testes)
+  - `retryOfflineEvents()` - Reenvia eventos salvos offline
+  - `offlinePendingCount` - Numero de eventos na fila offline
+  - `clearOfflineEvents()` - Limpa fila offline
   - Retry automatico com backoff exponencial (ate 3 tentativas em 5xx)
+  - Fila offline persistente com retry periodico (SharedPreferences)
   - Envia via POST para `{baseUrl}/events`
+- **DevAllOfflineStorage** (`lib/src/offline_storage.dart`) - Persistencia local de eventos que falharam no envio
 - **DevAllDeviceIdentity** (`lib/device_identity.dart`) - Gera e persiste UUID do dispositivo via SharedPreferences
 - **Platform Info** (`lib/src/platform_info_*.dart`) - Conditional imports para compatibilidade Web/IO
 - **Enums** (`lib/enums.dart`) - `DevAllEventType` (error, warning, info, log, metric, custom) e `DevAllEnvironment` (dev, staging, prod)

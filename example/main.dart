@@ -42,6 +42,26 @@ void main() async {
   // Forca envio manual dos eventos na fila
   await DevAllAnalytics.flush();
 
+  // --- Modo offline (habilitado por padrao) ---
+  // Se o envio falhar (sem internet, servidor fora), eventos sao salvos
+  // localmente e reenviados automaticamente quando a conexao voltar.
+  DevAllAnalytics.init(
+    projectToken: 'seu-token-do-projeto',
+    enableOffline: true,                         // default: true
+    offlineRetryInterval: Duration(minutes: 2),  // default: 2min
+    maxOfflineEvents: 500,                       // default: 500
+  );
+
+  // Ver quantos eventos estao na fila offline
+  final pending = await DevAllAnalytics.offlinePendingCount;
+  print('Eventos pendentes offline: $pending');
+
+  // Forcar reenvio manual (ex: app detectou que o Wi-Fi voltou)
+  await DevAllAnalytics.retryOfflineEvents();
+
+  // Limpar fila offline
+  await DevAllAnalytics.clearOfflineEvents();
+
   // --- URL customizada (self-hosted) ---
   DevAllAnalytics.init(
     projectToken: 'seu-token',

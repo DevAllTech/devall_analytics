@@ -103,6 +103,36 @@ DevAllAnalytics.init(
 await DevAllAnalytics.flush();
 ```
 
+### Modo offline (auto-retry)
+
+Eventos que falham no envio sao salvos localmente e reenviados automaticamente:
+
+```dart
+DevAllAnalytics.init(
+  projectToken: 'SUA_CHAVE',
+  enableOffline: true,              // default: true
+  offlineRetryInterval: Duration(minutes: 2), // default: 2min
+  maxOfflineEvents: 500,            // default: 500
+);
+
+// Ver quantos eventos estao na fila offline
+final pending = await DevAllAnalytics.offlinePendingCount;
+print('Eventos pendentes: $pending');
+
+// Forcar retry manual (ex: ao detectar que o Wi-Fi voltou)
+await DevAllAnalytics.retryOfflineEvents();
+
+// Limpar fila offline
+await DevAllAnalytics.clearOfflineEvents();
+```
+
+O SDK tenta automaticamente reenviar eventos offline:
+- Na inicializacao (`init()`)
+- Periodicamente (a cada `offlineRetryInterval`)
+- Manualmente via `retryOfflineEvents()`
+
+Eventos com erro 4xx (dados invalidos) **nao** sao salvos offline — apenas falhas de rede e erros de servidor (5xx).
+
 ### HTTP client customizado (testes)
 
 ```dart
