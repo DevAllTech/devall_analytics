@@ -102,6 +102,56 @@ void main() {
       expect(body['deviceId'], isA<String>());
     });
 
+    test('sends single event to /events endpoint', () async {
+      DevAllAnalytics.init(
+        projectToken: 'test-token',
+        httpClient: mockClient,
+        enableOffline: false,
+      );
+
+      await DevAllAnalytics.trackEvent(
+        type: DevAllEventType.info,
+        environment: DevAllEnvironment.dev,
+        category: 'test',
+        message: 'single event',
+        payload: {},
+        deviceInfo: {'platform': 'test'},
+      );
+
+      expect(capturedRequests, hasLength(1));
+      expect(
+        capturedRequests.first.url.path,
+        endsWith('/events'),
+      );
+      expect(
+        capturedRequests.first.url.path.endsWith('/events/batch'),
+        isFalse,
+      );
+    });
+
+    test('truncates message to 500 characters', () async {
+      DevAllAnalytics.init(
+        projectToken: 'test-token',
+        httpClient: mockClient,
+        enableOffline: false,
+      );
+
+      final longMessage = 'A' * 600;
+
+      await DevAllAnalytics.trackEvent(
+        type: DevAllEventType.info,
+        environment: DevAllEnvironment.dev,
+        category: 'test',
+        message: longMessage,
+        payload: {},
+        deviceInfo: {'platform': 'test'},
+      );
+
+      final body =
+          jsonDecode(capturedRequests.first.body) as Map<String, dynamic>;
+      expect((body['message'] as String).length, equals(500));
+    });
+
     test('omits ip from payload when null', () async {
       DevAllAnalytics.init(
         projectToken: 'test-token',
@@ -276,6 +326,12 @@ void main() {
 
       expect(capturedRequests, hasLength(1));
       expect(DevAllAnalytics.queueLength, equals(0));
+
+      // Batch requests should use /events/batch endpoint
+      expect(
+        capturedRequests.first.url.path,
+        endsWith('/events/batch'),
+      );
 
       final body =
           jsonDecode(capturedRequests.first.body) as Map<String, dynamic>;

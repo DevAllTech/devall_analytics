@@ -383,7 +383,7 @@ class DevAllAnalytics {
       'type': type.name,
       'environment': environment.name,
       'category': category,
-      'message': message,
+      'message': message.length > 500 ? message.substring(0, 500) : message,
       'payload': payload,
       'deviceInfo': deviceInfo,
       if (ip != null) 'ip': ip,
@@ -515,45 +515,40 @@ class DevAllAnalytics {
     final shouldCloseClient = _httpClient == null;
 
     try {
-      final uri = Uri.parse('$_baseUrl/events');
+      final isBatch = events.length > 1;
+      final uri = Uri.parse(
+          isBatch ? '$_baseUrl/events/batch' : '$_baseUrl/events');
       final headers = <String, String>{
         'Content-Type': 'application/json',
         'x-project-token': _projectToken!,
       };
 
-      final jsonBody = events.length == 1
-          ? jsonEncode(events.first)
-          : jsonEncode({'events': events});
+      final jsonBody = isBatch
+          ? jsonEncode({'events': events})
+          : jsonEncode(events.first);
+
+      // Encode body as bytes - using utf8.encode directly avoids the http
+      // package's automatic Content-Type charset modification that can cause
+      // parsing issues on some servers.
+      List<int> bodyBytes = utf8.encode(jsonBody);
 
       // Compression support
-      List<int>? bodyBytes;
-      String body;
       if (_compressionEnabled) {
         try {
           bodyBytes = _gzipEncode(jsonBody);
           headers['Content-Encoding'] = 'gzip';
         } catch (_) {
-          // Fallback to uncompressed
+          // Fallback to uncompressed (already encoded above)
         }
       }
-      body = jsonBody;
 
       for (var attempt = 0; attempt <= _maxRetries; attempt++) {
         try {
-          http.Response response;
-          if (bodyBytes != null) {
-            final request = http.Request('POST', uri);
-            request.headers.addAll(headers);
-            request.bodyBytes = bodyBytes;
-            final streamed = await client.send(request);
-            response = await http.Response.fromStream(streamed);
-          } else {
-            response = await client.post(
-              uri,
-              headers: headers,
-              body: body,
-            );
-          }
+          final request = http.Request('POST', uri);
+          request.headers.addAll(headers);
+          request.bodyBytes = bodyBytes;
+          final streamed = await client.send(request);
+          final response = await http.Response.fromStream(streamed);
 
           if (response.statusCode < 400) {
             return true; // Success

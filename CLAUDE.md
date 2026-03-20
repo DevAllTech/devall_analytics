@@ -4,7 +4,7 @@
 
 SDK oficial de analytics do DevAll Tech para Flutter. Permite monitorar eventos, erros e comportamentos de aplicativos Flutter com facilidade.
 
-- **Versao:** 0.1.0
+- **Versao:** 0.1.1
 - **Linguagem:** Dart 3.5.4+
 - **Framework:** Flutter (>=1.17.0)
 - **Licenca:** MIT
@@ -84,7 +84,8 @@ flutter pub publish      # Publicar no pub.dev
   - Sampling rate configuravel (0.0-1.0)
   - Rate limiting por minuto
   - Compressao gzip opcional
-  - Envia via POST para `{baseUrl}/events`
+  - Trunca message em 500 caracteres automaticamente
+  - Envia via POST para `{baseUrl}/events` (single) ou `{baseUrl}/events/batch` (batch)
 - **DevAllUserIdentity** (`lib/src/user_identity.dart`) - Identificacao de usuario (userId + traits)
 - **DevAllSessionManager** (`lib/src/session_manager.dart`) - Sessoes com UUID e timestamps
 - **DevAllBreadcrumbs** (`lib/src/breadcrumbs.dart`) - Buffer circular de breadcrumbs com limite configuravel
@@ -114,10 +115,11 @@ flutter pub publish      # Publicar no pub.dev
 
 ## API Endpoint
 
-- **POST** `{baseUrl}/events` (default: `https://api-logs.devalltech.com.br/api/v1/events`)
+- **POST** `{baseUrl}/events` (default: `https://api-logs.devalltech.com.br/api/v1/events`) - evento unico
+- **POST** `{baseUrl}/events/batch` - envio em lote (2+ eventos)
 - Header: `x-project-token` com o token do projeto
 - Header: `Content-Encoding: gzip` (quando compressao habilitada)
-- Body (single): JSON com deviceId, timestamp, type, environment, category, message, payload, deviceInfo, ip, userId, userTraits, sessionId, sessionStart, screen, breadcrumbs
+- Body (single): JSON com deviceId, timestamp, type, environment, category, message (max 500 chars), payload, deviceInfo, ip, userId, userTraits, sessionId, sessionStart, screen, breadcrumbs
 - Body (batch): `{"events": [...]}`
 
 ## Plataformas Suportadas

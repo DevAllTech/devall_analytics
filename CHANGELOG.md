@@ -1,3 +1,14 @@
+## [0.1.1] - 2026-03-20
+
+### Correcoes
+
+- **Fix encoding HTTP**: corrigido envio do body via `client.post()` que modificava o `Content-Type` de `application/json` para `application/json; charset=utf-8`, causando erro de validacao em alguns servidores. Agora usa `http.Request` com `utf8.encode()` explicito para controle total dos headers.
+- **Rota batch dedicada**: eventos em lote agora sao enviados para `POST /events/batch` (antes usava a mesma rota `/events`).
+- **Truncamento de message**: campo `message` e truncado automaticamente em 500 caracteres antes do envio, evitando rejeicao pela API.
+- Removido `enableCompression: true` do exemplo basico (compressao deve ser opt-in).
+
+---
+
 ## [0.1.0] - 2026-03-19
 
 ### Novidades

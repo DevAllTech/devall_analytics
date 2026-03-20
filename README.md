@@ -30,7 +30,7 @@ Adicione ao seu `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  devall_analytics: ^0.1.0
+  devall_analytics: ^0.1.1
 ```
 
 Rode:
