@@ -383,7 +383,7 @@ class DevAllAnalytics {
       'type': type.name,
       'environment': environment.name,
       'category': category,
-      'message': message,
+      'message': message.length > 500 ? message.substring(0, 500) : message,
       'payload': payload,
       'deviceInfo': deviceInfo,
       if (ip != null) 'ip': ip,
@@ -515,15 +515,17 @@ class DevAllAnalytics {
     final shouldCloseClient = _httpClient == null;
 
     try {
-      final uri = Uri.parse('$_baseUrl/events');
+      final isBatch = events.length > 1;
+      final uri = Uri.parse(
+          isBatch ? '$_baseUrl/events/batch' : '$_baseUrl/events');
       final headers = <String, String>{
         'Content-Type': 'application/json',
         'x-project-token': _projectToken!,
       };
 
-      final jsonBody = events.length == 1
-          ? jsonEncode(events.first)
-          : jsonEncode({'events': events});
+      final jsonBody = isBatch
+          ? jsonEncode({'events': events})
+          : jsonEncode(events.first);
 
       // Encode body as bytes - using utf8.encode directly avoids the http
       // package's automatic Content-Type charset modification that can cause
