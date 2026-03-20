@@ -1,6 +1,6 @@
 name: devall_analytics
 description: Pacote oficial DevAll Tech para envio de eventos analíticos.
-version: 0.1.0
+version: 0.1.1
 homepage: https://analytics.devalltech.com.br
 repository: https://github.com/DevAllTech/devall_analytics
 issue_tracker: https://github.com/DevAllTech/devall_analytics/issues

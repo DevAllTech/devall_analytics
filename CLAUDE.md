@@ -4,7 +4,7 @@
 
 SDK oficial de analytics do DevAll Tech para Flutter. Permite monitorar eventos, erros e comportamentos de aplicativos Flutter com facilidade.
 
-- **Versao:** 0.1.0
+- **Versao:** 0.1.1
 - **Linguagem:** Dart 3.5.4+
 - **Framework:** Flutter (>=1.17.0)
 - **Licenca:** MIT
