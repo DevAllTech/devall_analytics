@@ -525,35 +525,28 @@ class DevAllAnalytics {
           ? jsonEncode(events.first)
           : jsonEncode({'events': events});
 
+      // Encode body as bytes - using utf8.encode directly avoids the http
+      // package's automatic Content-Type charset modification that can cause
+      // parsing issues on some servers.
+      List<int> bodyBytes = utf8.encode(jsonBody);
+
       // Compression support
-      List<int>? bodyBytes;
-      String body;
       if (_compressionEnabled) {
         try {
           bodyBytes = _gzipEncode(jsonBody);
           headers['Content-Encoding'] = 'gzip';
         } catch (_) {
-          // Fallback to uncompressed
+          // Fallback to uncompressed (already encoded above)
         }
       }
-      body = jsonBody;
 
       for (var attempt = 0; attempt <= _maxRetries; attempt++) {
         try {
-          http.Response response;
-          if (bodyBytes != null) {
-            final request = http.Request('POST', uri);
-            request.headers.addAll(headers);
-            request.bodyBytes = bodyBytes;
-            final streamed = await client.send(request);
-            response = await http.Response.fromStream(streamed);
-          } else {
-            response = await client.post(
-              uri,
-              headers: headers,
-              body: body,
-            );
-          }
+          final request = http.Request('POST', uri);
+          request.headers.addAll(headers);
+          request.bodyBytes = bodyBytes;
+          final streamed = await client.send(request);
+          final response = await http.Response.fromStream(streamed);
 
           if (response.statusCode < 400) {
             return true; // Success

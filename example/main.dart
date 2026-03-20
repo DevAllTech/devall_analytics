@@ -10,7 +10,6 @@ void main() async {
     samplingRate: 1.0, // Envia 100% dos eventos (default)
     maxEventsPerMinute: 60, // Limite de 60 eventos/min
     maxBreadcrumbs: 50, // Maximo de 50 breadcrumbs
-    enableCompression: true, // Habilitar compressao gzip
   );
 
   // ─── Identificacao de usuario ───
